@@ -1,76 +1,163 @@
 import enum
-import matplotlib.pyplot as plt
+import threading
+import time
 
 
 class State(enum.Enum):
     S1 = 1
     S2 = 2
     S3 = 3
+    OUT = 4
+
 
 heater = False
 cooler = False
-round_per_sec = 0
+cooler_round_per_sec = 0
 
-crnt_state = State.S1
+crnt_state = State.S1  # marked as default/initial
 next_state = None
 
-supernode_crnt_state = None  # todo
-supernode_next_state = None
+superstate_crnt_state = None
+superstate_next_state = None
 
-time = 0
+T_lock = None  # for both T and T_modified
 T = 25  # temperature
+T_modified = False
 
-# each of these values will be assigned to <T> at the corresponding time
-T_manual_change_values = [13, 28, 40, 26, 12, 32, 14, 40, 42]
-T_manual_change_times = [3, 8, 13, 19, 24, 30, 36, 41, 47]
-
-# T values will be stored here
-T_history = []
+terminate_program = False
 
 
-def air_conditioner(T):
-    match crnt_state:
-        case
-    return T
+class AirConditioner(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+
+    @staticmethod
+    def wait_for_event():
+        global T_modified
+
+        event_happened = False
+
+        while not event_happened:
+            time.sleep(0.1)
+            T_lock.acquire()
+            event_happened = T_modified
+            T_modified = False
+            T_lock.release()
+
+        return event_happened
+
+    def run(self):
+        global heater, cooler, T, next_state, crnt_state, superstate_crnt_state, superstate_next_state
+
+        while not terminate_program:
+            if crnt_state == State.S1:
+                heater = False
+                cooler = False
+                event_happened = self.wait_for_event()
+                if event_happened:
+                    if T < 15:
+                        next_state = State.S3
+                    elif T > 35:
+                        next_state = State.S2
+                    else:
+                        continue
+
+            elif crnt_state == State.S2:
+                global cooler_round_per_sec
+
+                heater = False
+                cooler = True
+                superstate_crnt_state = State.S1
+                cooler_round_per_sec = 4
+
+                while not superstate_crnt_state == State.OUT:
+                    if superstate_crnt_state == State.S1:
+                        cooler_round_per_sec = 4
+
+                        print('super node (S2) state:', superstate_crnt_state, '- RPS:', cooler_round_per_sec)
+
+                        event_happened = self.wait_for_event()
+                        if event_happened:
+                            if T < 25:
+                                superstate_next_state = State.OUT
+                            elif T > 40:
+                                superstate_next_state = State.S2
+                            else:
+                                continue
+                    elif superstate_crnt_state == State.S2:
+                        cooler_round_per_sec = 6
+
+                        print('super node (S2) state:', superstate_crnt_state, '- RPS:', cooler_round_per_sec)
+
+                        event_happened = self.wait_for_event()
+                        if event_happened:
+                            if T < 35:
+                                superstate_next_state = State.S1
+                            elif T > 45:
+                                superstate_next_state = State.S3
+                            else:
+                                continue
+                    elif superstate_crnt_state == State.S3:
+                        cooler_round_per_sec = 8
+
+                        print('super node (S2) state:', superstate_crnt_state, '- RPS:', cooler_round_per_sec)
+
+                        event_happened = self.wait_for_event()
+                        if event_happened:
+                            if T < 40:
+                                superstate_next_state = State.S2
+                            else:
+                                continue
+
+                    superstate_crnt_state = superstate_next_state
+
+                # state == OUT:
+                if T < 25:
+                    next_state = State.S1
+
+            elif crnt_state == State.S3:
+                heater = True
+                cooler = False
+                event_happened = self.wait_for_event()
+                if event_happened:
+                    if T > 30:
+                        next_state = State.S1
+                    else:
+                        continue
+
+            crnt_state = next_state
+            print('T:', T, '- State:', crnt_state)
+        return T
 
 
-def draw_chart(T_history):
-    # TODO
-    fig, ax = plt.subplots()
-    ax.scatter(range(len(T_history)), T_history)
-    # plt.plot(range(len(T_history)), T_history, '--o')
-    # ax.annotate('txt', (1, T_history[1]))
-    ax.annotate("X",
-                xy=(1, T_history[1]), xycoords='data',
-                xytext=(1, T_history[1] + 3), textcoords='data',
-                arrowprops=dict(arrowstyle="->", color="0.5",
-                                shrinkA=5, shrinkB=5,
-                                patchA=None, patchB=None,
-                                connectionstyle="arc3,rad=0.",
-                                ),
-                )
-    plt.show()
+class UserInput(threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+
+    def run(self):
+        global terminate_program
+        global T
+        global T_modified
+
+        while not terminate_program:
+            user_input = int(input(' -> enter an int as a new value for T (-1 to terminate the program): '))
+            if user_input == -1:
+                terminate_program = True
+            else:
+                T_lock.acquire()
+                T = user_input
+                T_modified = True
+                T_lock.release()
+            time.sleep(2)
 
 
 if __name__ == '__main__':
-    global time
-    max_time = 50
+    print('initial T:', str(T), '- initial state:', crnt_state)
 
-    
+    T_lock = threading.Lock()
 
-# for time in range(max_time + 1):
-#
-#     if time in T_manual_change_times:
-#         # applying manual changes to test the air_conditioner:
-#         T = T_manual_change_values[T_manual_change_times.index(time)]
-#     else:
-#         T = air_conditioner(T)
-#         # I've separated these parts so that the changes would be vividly visible
-#
-#     T_history.append(T)
+    user_input_thread = UserInput()
+    air_conditioner_thread = AirConditioner()
 
-# draw_chart(T_history)
-
-## draw_chart(T_manual_changes)
-
-
+    user_input_thread.start()
+    air_conditioner_thread.start()
